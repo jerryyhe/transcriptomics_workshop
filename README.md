@@ -27,7 +27,7 @@ CONDA_SUBDIR=osx-64
 
 Create a new conda environment. This specific step will probably take a little bit of time. 
 ```
-conda env create -f transcriptomics_env
+conda env create -f transcriptomics.yml
 ```
 
 Set up the environment
