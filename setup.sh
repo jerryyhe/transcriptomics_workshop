@@ -24,7 +24,10 @@ EOF
 cat >> ./etc/conda/deactivate.d/env_vars.sh << 'EOF'
 #!/bin/bash
 
-unset PSORTB_SIF
 PATH=$OLDPATH
 
 EOF
+
+export WORKDIR=$(pwd)
+export DATABASE_DIR=${WORKDIR}/databases
+export PATH=PATH=${PATH}:${WORKDIR}/scripts
