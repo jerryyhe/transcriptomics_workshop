@@ -20,7 +20,12 @@ git clone https://github.com/jerryyhe/transcriptomics_workshop.git
 ```
 
 ### MacOS and Linux with R installed
-Create a new conda environment. If you are using the M1 conda distribution - just skip this step - there's nothing I can do for you. This step will probably take a little bit of time. 
+If you're using an M1 (arm64) distribution of conda, run this line of code prior to the next step
+```
+CONDA_SUBDIR=osx-64
+```
+
+Create a new conda environment. This specific step will probably take a little bit of time. 
 ```
 conda env create -f transcriptomics_env
 ```
