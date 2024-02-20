@@ -1,0 +1,8 @@
+name: transcriptomics_workshop
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.12.2
+  - r-base=4.3.2
