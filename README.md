@@ -40,7 +40,7 @@ To activate the environment
 conda activate transcriptomics_workshop
 ```
 
-### MacOS and Linux without R installed (and refuse to install R)
+### MacOS and Linux without R installed (and refuse to install R) (and running the code above doesn't work)
 I would just recommend that you install R and RStudio because otherwise I'll ask you to install Visual Studio Code instead from [here](https://code.visualstudio.com/download). VSCode is more useful than RStudio and is a worthwhile investment, there are just some extra steps you'll have to take to get set up. 
 
 If you have a Mac, don't have R, but aren't using the Intel distribution of conda:
