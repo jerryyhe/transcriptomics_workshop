@@ -1,0 +1,290 @@
+---
+title: "Transcriptomics Tutorial"
+date: "21/02/2024"
+output: 
+  html_document:
+    toc: TRUE
+    toc_float: TRUE
+    theme: cerulean
+---
+
+# Pre-Processing
+## 1. FASTP
+```{bash eval = FALSE}
+fastp -i data/F01_R1_1M.fastq -I data/F01_R2_1M.fastq -o outputs/1_fastp_outputs/F01_R1_1M.fastq.gz -O outputs/1_fastp_outputs/F01_R2_1M.fastq.gz --html outputs/1_fastp_outputs/fastp.html --merge --merged_out outputs/1_fastp_outputs/F01_1M.merged.fastq.gz
+```
+
+
+## 2. DIAMOND Annotation
+```{bash eval = FALSE}
+diamond blastx -d databases/RefSeq_bac_TINY_24MB.dmnd -q outputs/1_fastp_outputs/F01_1M.merged.fastq.gz -o outputs/annotations.tsv
+```
+
+## 3. Read Counting (Aggregation)
+```{bash eval = FALSE}
+diamond_analysis_counter.py -I outputs/annotations.tsv -D databases/RefSeq_bac_TINY_24MB.fa -O -F
+```
+
+---
+
+
+
+# DESeq2
+## 0. Getting Started
+### 0.1 Package Installation: Skip if you have these packages already!
+```{r}
+# Install Tidyverse
+if (!requireNamespace("tidyverse", quietly = TRUE)) {
+  install.packages("tidyverse", repos = "https://cloud.r-project.org/")
+} else {print("Package already installed")}
+
+# Install BiocManager
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager", repos = "https://cloud.r-project.org/")
+} else {print("Package already installed")}
+
+# Install DESeq2
+if (!requireNamespace("DESeq2", quietly = TRUE)) {
+  BiocManager::install("DESeq2")
+} else {print("Package already installed")}
+```
+
+### 0.2 Load Packages
+```{r}
+suppressPackageStartupMessages(library(tidyverse))
+suppressPackageStartupMessages(library(DESeq2))
+```
+
+
+## 1. Constructing a DESeqDataSet Object from SAMSA2 Outputs
+
+Get the resulting `.tsv` files from your `output5` folder after running the SAMSA2 pipeline and place them in the same working directory of your script or in a sub-directory.
+
+### 1.1 Define Functions
+```{r}
+# Loads files from a directory
+load_files <- function(directory) {
+  strain_files <- list.files(path = directory, pattern = "*.tsv", full.names = TRUE, recursive = FALSE)
+  return(strain_files)
+}
+
+
+# files_to_array take the filenames from the load_files() output and concatenated them into a large dataframe
+files_to_array <- function(strain_files) {
+  df_exists <- FALSE 
+  
+  for(f in strain_files){
+    if(df_exists == FALSE){ 
+      df <- read_tsv(file = f, col_names = c("x", "count", "Function")) 
+      df_formatted <- format_df(df, f) 
+      df_exists <- TRUE 
+    }
+    else{
+      df <- read_tsv(file = f, col_names = c("x", "count", "Function"))
+      df_to_add <- format_df(df, f)
+      df_formatted <- full_join(df_formatted, df_to_add) 
+    }
+  }
+
+  df_formatted <- as.data.frame(mutate_all(df_formatted, ~replace(., is.na(.), 0)))
+  return(df_formatted)
+}
+
+# format_df is a helper function used in files_to_array() that helps join dataframes
+format_df <- function(df, file){
+  file_name <- tools::file_path_sans_ext(basename(file)) 
+  df[(file_name)] <- df %>% 
+    pull(count)
+  
+  df <- df %>% select(-x, -count)
+  return(df)    
+}
+```
+
+### 1.2 Load Count Data
+
+Now, we can load the files and create a count matrix using the self-defined and Base R functions - just change the dir variable and store the path of your directory.
+
+```{r}
+# Store the path of the directory containing your read counts (unnormalized)
+dir <- "./outputs/function_results/"
+
+# Parses through each .tsv read count file and joins them together.
+dat <- load_files(dir) %>% 
+  files_to_array() %>% 
+  suppressMessages()
+
+# Turn the dataframe into a matrix of integers
+dat_matrix <- column_to_rownames(dat, "Function") %>% as.matrix()
+```
+
+### 1.3 Load Metadata
+
+Make a metadata file that contains your sample names in the first column and any other metadata categories you need.
+
+-   I would recommend using MS Excel for this and loading the metadata file!
+-   *NOTE* It is critical that the the columns of that count matrix and the rows of the column data are in the same order and have the same name. The order and name must be consistent.
+-   It's a good idea to store the metadata file in the same directory that your R script is in.
+
+```{r}
+# Load metadata with first column the rownames
+metadata <- read.csv(filename, row.names = 1)
+
+# Converts all columns to factors. They MUST be factors 
+metadata <- metadata %>% 
+  mutate(across(everything(), ~as.factor(.)))
+
+# Check if the rownames and the colnames are in the same order and have the same names
+all(rownames(metadata) == colnames(dat_matrix))
+```
+
+
+
+### 1.4 Creating a DESeqDataSet Object
+
+Load your count matrix (dat_matrix) and the sample information (metadata) to construct the DESeqDataSet object
+
+```{r}
+dds <- DESeqDataSetFromMatrix(countData = dat,
+                              colData = metadata,
+                              design = ~Media)
+
+dds
+```
+
+## 2. Data Preparation
+### 2.1 Refactoring to Specify the Control (Baseline) Condition
+
+By default R will choose a reference level for factors based on alphabetical order, which will be how DESeq2 will interpret it. Since we want DESeq2 to use the 'control' condition as reference, we need to tell it which one it is. 
+
+```{r}
+# Change "base" to the name of your baseline control condition.
+dds$Condition <- relevel(dds$Condition, ref = "Planktonic")
+```
+
+
+## 3. Differential Gene Expression Analysis
+
+The standard differential expression analysis steps are wrapped into a single function, `DESeq()`. Results tables are generated using the function `results()`, the log2 fold change and Wald test p-value will be for the last variable in the design formula, and if this is a factor, the comparison will be the last level of this variable over the reference level. The order of the variables of the design do not matter so long as the user specifies the comparison to build a result table for using the name or contrast argument of results.
+
+### 3.1 Perform DE Analysis
+```{r}
+dds <- DESeq(dds)
+```
+
+Check the results of your DESeqDataSet object.
+```{r}
+resultsNames(dds)
+```
+
+### 3.2 Extracting Results
+```{r}
+res <- results(dds) 
+```
+
+### 3.3 Exporting Results
+```{r}
+# write_csv(as.data.frame(res), "output_file.csv")
+```
+
+
+## 4. Exploring Results
+
+### 4.1 MA Plots
+The M stands for the log ratio. This is essentially representing the ratio of counts in the condition vs the control. The A stands for the mean average and is represented on the x-axis.
+
+Point will be coloured red if the adjusted p-value is less than 0.1. Points which fall out of the window are plotted as open triangle.
+
+```{r}
+plotMA(res)
+```
+
+More information about the results column
+```{r}
+mcols(res)$description
+```
+
+### 4.2. Plot Counts
+
+-   It can be useful to examine the counts of reads for a single gene across the groups.
+-   A simple function for making this plot is plotCounts, which normalizes the counts by the estimated size factor, and adds pseudocounts of 1/2 to allow for log scale plotting.
+-   Counts are grouped by the variables in `intgroup`, where more than one variable can be specified.
+
+Below we specified the gene with the smallest p-value from the results tables created above.
+```{r}
+plotCounts(dds, gene=which.min(res$padj), intgroup="Condition")
+```
+
+For customized plotting with ggplot, an argument `ReturnData` specifies that the function should only return a `data.frame` for plotting with ggplot.
+```{r}
+count_data <- plotCounts(dds, gene=which.min(res$padj), intgroup="Condition", 
+                returnData=TRUE, )
+
+count_data %>% 
+  ggplot(aes(x = Condition, y = count)) + 
+    geom_point(position = position_jitter()) +
+    theme_bw()
+```
+
+
+
+### 4.3 Extracting Normalized Counts
+This is an alternative method of obtaining a dataframe with normalized counts.
+```{r}
+# Set species separator variable
+species_sep = "_EB_"
+
+# Get the size factors
+ddsSF <- estimateSizeFactors(dds)
+
+# Get normalized counts
+normalized_counts = counts(ddsSF, normalized = TRUE)
+
+# Separate the Function column into locus tag and product columns
+normalized_counts <- normalized_counts %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = "Function") %>% 
+  separate(col = Function, into = c("Locus_tag", "Product"), sep = species_sep, extra = "merge")
+```
+
+
+## 5. Data Quality Assesment by Sample Clustering and Visualization
+### 5.1 Count Data Transformations
+
+-   In order to test for differential expression, we operate on raw counts and use discrete distributions.
+-   However, for other downstream analyses like visualization or clustering it might be useful to work with a transformed version of the count data. The most obvious transformation is logarithmic, but since some values for a gene can be zero in some conditions and non-zero in other, some advocate for the use of pseudocounts (i.e. transformation of the form log2(n+no), where N0 is a positive constant).
+
+Function `VST` and `rlog` produce transformed data on the log2 scale which has been normalized with respect to library size or other normalization factors.
+
+```{r}
+vsd <- vst(dds, blind = FALSE) # variance-stabilizing transformation
+rld <- rlog(dds, blind = FALSE) # regularize log transformation
+
+head(assay(vsd), 3)
+```
+
+### 5.2 PCA Plot 
+```{r}
+pcaData <- plotPCA(vsd, intgroup = c("Condition"), returnData=TRUE)
+percentVar <- round(100 * attr(pcaData, "percentVar"))
+PCA_plt <- pcaData %>% 
+  ggplot(aes(PC1, PC2, colour = Condition)) +
+  geom_point(size = 3) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+  ylab(paste0("PC2: ",percentVar[2],"% variance")) + 
+  coord_fixed() +
+  theme_light() +
+      theme(panel.border = element_rect(color = "black", linewidth = 1.5),
+        panel.grid = element_line(colour = "white"),
+        axis.ticks = element_line(color = "black", size = 1),
+        strip.text.x = element_blank(),
+        axis.title = element_text(size = 12),
+        axis.text.x = element_text(colour = "black", size = 12.5),
+        axis.text.y = element_text(colour = "black", size = 12.5),
+        legend.text = element_text(size = 12.5),
+        legend.title = element_blank()
+        ) +
+  scale_colour_discrete(labels = c("Mucin (Biofilm)", "Mucin (Planktonic)")) 
+
+plot(PCA_plt)
+```
