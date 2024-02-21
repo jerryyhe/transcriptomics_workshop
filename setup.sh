@@ -15,6 +15,7 @@ touch ./etc/conda/deactivate.d/env_vars.sh
 cat >> ./etc/conda/activate.d/env_vars.sh << 'EOF'
 #!/bin/bash
 
+export OLDPATH=$PATH
 export WORKDIR=$(pwd)
 export DATABASE_DIR=${WORKDIR}/databases
 export PATH=PATH=${PATH}:${WORKDIR}/scripts
@@ -28,6 +29,6 @@ PATH=$OLDPATH
 
 EOF
 
-export WORKDIR=$(pwd)
-export DATABASE_DIR=${WORKDIR}/databases
-export PATH=PATH=${PATH}:${WORKDIR}/scripts
+# export WORKDIR=$(pwd)
+# export DATABASE_DIR=${WORKDIR}/databases
+# export PATH=PATH=${PATH}:${WORKDIR}/scripts
